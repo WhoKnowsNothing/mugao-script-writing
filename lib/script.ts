@@ -220,6 +220,22 @@ export function moveSegment(
   return { ...doc, segments: rows };
 }
 
+export function moveSegmentBefore(
+  doc: Script,
+  id: string,
+  targetId: string,
+): Script {
+  const from = doc.segments.findIndex((row) => row.id === id);
+  const target = doc.segments.findIndex((row) => row.id === targetId);
+  if (from < 0 || target < 0 || id === targetId) return doc;
+  const rows = [...doc.segments];
+  const [moving] = rows.splice(from, 1);
+  const insertion = rows.findIndex((row) => row.id === targetId);
+  rows.splice(insertion, 0, moving);
+  if (rows.every((row, index) => row === doc.segments[index])) return doc;
+  return { ...doc, segments: rows };
+}
+
 export function splitSegment(doc: Script, id: string, offset: number): Script {
   const index = doc.segments.findIndex((row) => row.id === id);
   const row = doc.segments[index];

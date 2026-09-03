@@ -1,7 +1,13 @@
 import { Blob as NodeBlob } from 'node:buffer';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ScriptEditor } from '@/components/script-editor';
 import { LocalRepository } from '@/lib/storage';
@@ -26,9 +32,25 @@ afterEach(() => {
 });
 
 const waitUntilSaved = () =>
-  waitFor(() => expect(screen.queryByText('已保存到本机')).not.toBeNull(), {
-    timeout: 2500,
-  });
+  waitFor(
+    () =>
+      expect(document.querySelector('.save-status')?.textContent).toBe(
+        '已保存到本机',
+      ),
+    { timeout: 2500 },
+  );
+
+const createDataTransfer = () => {
+  let value = '';
+  return {
+    effectAllowed: 'none',
+    dropEffect: 'none',
+    setData: vi.fn((_type: string, next: string) => {
+      value = next;
+    }),
+    getData: vi.fn(() => value),
+  };
+};
 
 describe('编辑器实际组件流程（非浏览器视觉测试）', () => {
   it('编辑后保存，卸载重开恢复；一键 Markdown 使用当前文案', async () => {
@@ -129,6 +151,86 @@ describe('编辑器实际组件流程（非浏览器视觉测试）', () => {
     expect(
       (screen.getByLabelText('第2段文案') as HTMLTextAreaElement).value,
     ).toBe(before);
+    await waitUntilSaved();
+  }, 30000);
+
+  it('可从段落标题旁在上方或下方插入空白段落', async () => {
+    render(<ScriptEditor />);
+    await waitUntilSaved();
+    const original = (screen.getByLabelText('第1段文案') as HTMLTextAreaElement)
+      .value;
+    fireEvent.click(
+      screen.getByRole('button', { name: '在第1段上方插入段落' }),
+    );
+    expect(
+      (screen.getByLabelText('第1段文案') as HTMLTextAreaElement).value,
+    ).toBe('');
+    expect(
+      (screen.getByLabelText('第2段文案') as HTMLTextAreaElement).value,
+    ).toBe(original);
+    fireEvent.click(
+      screen.getByRole('button', { name: '在第2段下方插入段落' }),
+    );
+    expect(
+      (screen.getByLabelText('第3段文案') as HTMLTextAreaElement).value,
+    ).toBe('');
+    await waitUntilSaved();
+  });
+
+  it('三点菜单可将整段移动到指定段落上方', async () => {
+    render(<ScriptEditor />);
+    await waitUntilSaved();
+    const third = (screen.getByLabelText('第3段文案') as HTMLTextAreaElement)
+      .value;
+    fireEvent.click(screen.getByRole('button', { name: '第3段操作' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: /移动至/, hidden: true }),
+    );
+    fireEvent.change(screen.getByLabelText('目标段落'), {
+      target: { value: '1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '移动' }));
+    expect(
+      (screen.getByLabelText('第1段文案') as HTMLTextAreaElement).value,
+    ).toBe(third);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+    await waitUntilSaved();
+  }, 30000);
+
+  it('正文编号与大纲六点拖拽柄都能移动整段', async () => {
+    render(<ScriptEditor />);
+    await waitUntilSaved();
+    const third = (screen.getByLabelText('第3段文案') as HTMLTextAreaElement)
+      .value;
+    const mainTransfer = createDataTransfer();
+    fireEvent.dragStart(
+      screen.getByRole('button', { name: '拖动正文第3段排序' }),
+      { dataTransfer: mainTransfer },
+    );
+    const firstSegment = document.getElementById('segment-welcome-1');
+    expect(firstSegment).not.toBeNull();
+    fireEvent.dragOver(firstSegment!, { dataTransfer: mainTransfer });
+    fireEvent.drop(firstSegment!, { dataTransfer: mainTransfer });
+    expect(
+      (screen.getByLabelText('第1段文案') as HTMLTextAreaElement).value,
+    ).toBe(third);
+
+    const second = (screen.getByLabelText('第2段文案') as HTMLTextAreaElement)
+      .value;
+    const outlineTransfer = createDataTransfer();
+    const outlineSource = screen.getByRole('button', {
+      name: '拖动大纲第2段排序',
+    });
+    const outlineTarget = screen
+      .getByRole('button', { name: '拖动大纲第1段排序' })
+      .closest('.outline-item');
+    expect(outlineTarget).not.toBeNull();
+    fireEvent.dragStart(outlineSource, { dataTransfer: outlineTransfer });
+    fireEvent.dragOver(outlineTarget!, { dataTransfer: outlineTransfer });
+    fireEvent.drop(outlineTarget!, { dataTransfer: outlineTransfer });
+    expect(
+      (screen.getByLabelText('第1段文案') as HTMLTextAreaElement).value,
+    ).toBe(second);
     await waitUntilSaved();
   }, 30000);
 

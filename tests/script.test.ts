@@ -7,6 +7,7 @@ import {
   importAsCopies,
   mergeWithNext,
   moveSegment,
+  moveSegmentBefore,
   parseBackup,
   sampleWorkspace,
   scriptStats,
@@ -75,6 +76,15 @@ describe('段落结构操作', () => {
     expect(moved.segments[1]).toEqual(first);
     expect(script.segments[0]).toBe(first);
     expect(moveSegment(script, first.id, -1)).toBe(script);
+  });
+  it('可将整段插入到目标段落上方，并忽略无效或无变化的移动', () => {
+    const script = sampleWorkspace().documents[0];
+    const [first, second, third] = script.segments;
+    const moved = moveSegmentBefore(script, third.id, first.id);
+    expect(moved.segments).toEqual([third, first, second]);
+    expect(moveSegmentBefore(script, first.id, second.id)).toBe(script);
+    expect(moveSegmentBefore(script, first.id, first.id)).toBe(script);
+    expect(moveSegmentBefore(script, 'missing', third.id)).toBe(script);
   });
   it('分段不丢字、不切开 emoji，停顿跟随末尾，制作说明不重复', () => {
     const script = createScript();

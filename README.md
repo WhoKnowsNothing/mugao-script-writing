@@ -1,6 +1,10 @@
 # 幕稿 · 视频脚本编辑器
 
+[![CI](https://github.com/WhoKnowsNothing/mugao-script-writing/actions/workflows/ci.yml/badge.svg)](https://github.com/WhoKnowsNothing/mugao-script-writing/actions/workflows/ci.yml)
+
 以 Markdown 导出为主的个人视频写稿工具。左侧写口播，右侧记录画面、BGM / 音效和附注。不调用 AI，也不上传文案。
+
+当前稳定版本为 **v1.0.0**。项目以 MIT License 开源，源码托管在 [GitHub](https://github.com/WhoKnowsNothing/mugao-script-writing)。
 
 ## 使用
 
@@ -19,7 +23,8 @@ npm run dev
 
 - 多份脚本、段落大纲、标题和简介。
 - 文案 / 画面 / BGM / 附注双栏编辑，输入框自动增高。
-- 新增、复制、删除、上移、下移、光标分段与合并。
+- 可在当前段落上方或下方插入新段落，也支持复制、删除、光标分段与合并。
+- 可通过“移动至…”、正文左侧六点拖拽柄或段落大纲拖拽整段排序，文案与制作说明始终成对移动。
 - 全文及逐段字数、口播估时、停顿与手动时长。
 - 分组撤销和重做。连续输入合为一组，结构操作单独撤销，最多 80 步；关闭页面后撤销历史不保留。
 - IndexedDB 自动保存，保存失败提醒，其他标签页的版本冲突保护。
@@ -87,3 +92,7 @@ lib/export-docx.ts       Word 文档生成（按需加载）
 tests/                   逻辑与组件检查
 scripts/                 辅助脚本
 ```
+
+## 开源许可
+
+项目采用 [MIT License](LICENSE)。欢迎提交 Issue 或 Pull Request；请勿在问题、截图或备份文件中附带私人稿件及其他敏感内容。

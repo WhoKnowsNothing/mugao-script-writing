@@ -7,12 +7,15 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
 } from 'react';
 import {
   AlignLeft,
   ArrowDown,
   ArrowDownToLine,
   ArrowUp,
+  BetweenVerticalEnd,
+  BetweenVerticalStart,
   BookOpen,
   Check,
   ChevronDown,
@@ -27,10 +30,12 @@ import {
   FileText,
   Film,
   History,
+  GripVertical,
   LoaderCircle,
   LockKeyhole,
   Menu,
   MoreHorizontal,
+  MoveVertical,
   Music2,
   PanelLeftClose,
   Plus,
@@ -77,6 +82,7 @@ import {
   LIMITS,
   mergeWithNext,
   moveSegment,
+  moveSegmentBefore,
   newId,
   parseBackup,
   replaceScript,
@@ -124,6 +130,10 @@ export function ScriptEditor() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [snapshotError, setSnapshotError] = useState('');
   const [timingId, setTimingId] = useState<string | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [moveTarget, setMoveTarget] = useState(1);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [toast, setToast] = useState('');
   const [busy, setBusy] = useState(false);
@@ -136,6 +146,7 @@ export function ScriptEditor() {
   const selection = useRef<{ id: string; offset: number } | null>(null);
   const composing = useRef(false);
   const pendingFocus = useRef<string | null>(null);
+  const dragSourceId = useRef<string | null>(null);
   const scriptRef = useRef(script);
   useLayoutEffect(() => {
     scriptRef.current = script;
@@ -174,7 +185,7 @@ export function ScriptEditor() {
   );
 
   const addSegment = useCallback(
-    (afterId?: string) => {
+    (referenceId?: string, placement: 'before' | 'after' = 'after') => {
       if (scriptRef.current.segments.length >= LIMITS.segments) {
         notify('每份脚本最多 500 个段落。');
         return;
@@ -183,14 +194,73 @@ export function ScriptEditor() {
       pendingFocus.current = row.id;
       changeDocument((doc) => {
         const rows = [...doc.segments];
-        const index = afterId
-          ? rows.findIndex((item) => item.id === afterId) + 1
-          : rows.length;
+        const referenceIndex = referenceId
+          ? rows.findIndex((item) => item.id === referenceId)
+          : -1;
+        const index =
+          referenceIndex < 0
+            ? rows.length
+            : referenceIndex + Number(placement === 'after');
         rows.splice(index, 0, row);
         return { ...doc, segments: rows };
       });
     },
     [changeDocument, notify],
+  );
+
+  const moveBefore = useCallback(
+    (id: string, targetId: string) => {
+      const current = scriptRef.current;
+      const moving = current.segments.find((row) => row.id === id);
+      const next = moveSegmentBefore(current, id, targetId);
+      if (!moving || next === current) {
+        notify('这一段已经在目标位置。');
+        return false;
+      }
+      const position = next.segments.findIndex((row) => row.id === id) + 1;
+      changeDocument(() => next);
+      notify(`已将“${moving.title || '未命名段落'}”移动至第 ${position} 段。`);
+      return true;
+    },
+    [changeDocument, notify],
+  );
+
+  const startSegmentDrag = useCallback(
+    (event: ReactDragEvent<HTMLElement>, id: string) => {
+      dragSourceId.current = id;
+      setDraggingId(id);
+      setDropTargetId(null);
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', id);
+    },
+    [],
+  );
+
+  const dragOverSegment = useCallback(
+    (event: ReactDragEvent<HTMLElement>, targetId: string) => {
+      if (!dragSourceId.current || dragSourceId.current === targetId) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      setDropTargetId((current) => (current === targetId ? current : targetId));
+    },
+    [],
+  );
+
+  const finishSegmentDrag = useCallback(() => {
+    dragSourceId.current = null;
+    setDraggingId(null);
+    setDropTargetId(null);
+  }, []);
+
+  const dropSegment = useCallback(
+    (event: ReactDragEvent<HTMLElement>, targetId: string) => {
+      event.preventDefault();
+      const sourceId =
+        event.dataTransfer.getData('text/plain') || dragSourceId.current;
+      if (sourceId && sourceId !== targetId) moveBefore(sourceId, targetId);
+      finishSegmentDrag();
+    },
+    [finishSegmentDrag, moveBefore],
   );
 
   const split = useCallback(
@@ -471,14 +541,29 @@ export function ScriptEditor() {
       </div>
       <nav className="segment-outline" aria-label="段落大纲">
         {script.segments.map((row, i) => (
-          <a
-            href={`#segment-${row.id}`}
+          <div
             key={row.id}
-            onClick={() => setMobileOpen(false)}
+            className={`outline-item${draggingId === row.id ? ' is-dragging' : ''}${dropTargetId === row.id ? ' is-drop-target' : ''}`}
+            onDragOver={(event) => dragOverSegment(event, row.id)}
+            onDrop={(event) => dropSegment(event, row.id)}
           >
-            <span>{String(i + 1).padStart(2, '0')}</span>
-            <span>{row.title || `段落 ${i + 1}`}</span>
-          </a>
+            <button
+              type="button"
+              className="outline-drag-handle"
+              draggable
+              disabled={!ready}
+              aria-label={`拖动大纲第${i + 1}段排序`}
+              title="拖动整段排序"
+              onDragStart={(event) => startSegmentDrag(event, row.id)}
+              onDragEnd={finishSegmentDrag}
+            >
+              <GripVertical size={14} />
+            </button>
+            <a href={`#segment-${row.id}`} onClick={() => setMobileOpen(false)}>
+              <span>{String(i + 1).padStart(2, '0')}</span>
+              <span>{row.title || `段落 ${i + 1}`}</span>
+            </a>
+          </div>
         ))}
       </nav>
       <div className="sidebar-utilities">
@@ -516,6 +601,14 @@ export function ScriptEditor() {
     </>
   );
   const timingRow = script.segments.find((row) => row.id === timingId);
+  const movingRow = script.segments.find((row) => row.id === movingId);
+  const movingIndex = script.segments.findIndex((row) => row.id === movingId);
+  const moveTargetRow = script.segments[moveTarget - 1];
+  const canMove =
+    !!movingRow &&
+    !!moveTargetRow &&
+    movingIndex !== moveTarget - 1 &&
+    movingIndex + 1 !== moveTarget - 1;
   const markdown = useMemo(
     () => (previewOpen ? exportMarkdown(script, markdownLayout) : ''),
     [previewOpen, script, markdownLayout],
@@ -840,14 +933,27 @@ export function ScriptEditor() {
                 const start = timeline[index];
                 const elapsed = timeline[index + 1];
                 return (
-                  <section
-                    className="script-segment"
+                  <div
+                    className={`script-segment${draggingId === row.id ? ' is-dragging' : ''}${dropTargetId === row.id ? ' is-drop-target' : ''}`}
                     id={`segment-${row.id}`}
                     key={row.id}
                     aria-label={`第${index + 1}段`}
+                    onDragOver={(event) => dragOverSegment(event, row.id)}
+                    onDrop={(event) => dropSegment(event, row.id)}
                   >
                     <div className="segment-number">
-                      <span>{String(index + 1).padStart(2, '0')}</span>
+                      <button
+                        type="button"
+                        className="segment-drag-handle"
+                        draggable
+                        aria-label={`拖动正文第${index + 1}段排序`}
+                        title="拖动整段排序"
+                        onDragStart={(event) => startSegmentDrag(event, row.id)}
+                        onDragEnd={finishSegmentDrag}
+                      >
+                        <GripVertical size={13} />
+                        <span>{String(index + 1).padStart(2, '0')}</span>
+                      </button>
                     </div>
                     <div className="narration-cell">
                       <div className="segment-heading">
@@ -861,103 +967,134 @@ export function ScriptEditor() {
                             patchSegment(row.id, 'title', event.target.value)
                           }
                         />
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            render={
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                aria-label={`第${index + 1}段操作`}
-                              />
-                            }
+                        <div className="segment-row-actions">
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            disabled={script.segments.length >= LIMITS.segments}
+                            aria-label={`在第${index + 1}段上方插入段落`}
+                            title="在上方插入段落"
+                            onClick={() => addSegment(row.id, 'before')}
                           >
-                            <MoreHorizontal size={16} />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            align="end"
-                            className="segment-menu"
+                            <BetweenVerticalStart size={16} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            disabled={script.segments.length >= LIMITS.segments}
+                            aria-label={`在第${index + 1}段下方插入段落`}
+                            title="在下方插入段落"
+                            onClick={() => addSegment(row.id, 'after')}
                           >
-                            <DropdownMenuItem
-                              onClick={() => addSegment(row.id)}
+                            <BetweenVerticalEnd size={16} />
+                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger
+                              render={
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  aria-label={`第${index + 1}段操作`}
+                                />
+                              }
                             >
-                              <Plus />
-                              在下方新增
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => split(row.id)}>
-                              <Scissors />
-                              在光标处分段{' '}
-                              <span className="menu-note">Ctrl+Enter</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={index === script.segments.length - 1}
-                              onClick={() => {
-                                try {
-                                  changeDocument((doc) =>
-                                    mergeWithNext(doc, row.id),
-                                  );
-                                  notify('已合并，两段制作说明均已保留。');
-                                } catch (cause) {
-                                  notify((cause as Error).message);
+                              <MoreHorizontal size={16} />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              align="end"
+                              className="segment-menu"
+                            >
+                              <DropdownMenuItem
+                                onClick={() => addSegment(row.id)}
+                              >
+                                <Plus />
+                                在下方新增
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => split(row.id)}>
+                                <Scissors />
+                                在光标处分段{' '}
+                                <span className="menu-note">Ctrl+Enter</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={index === script.segments.length - 1}
+                                onClick={() => {
+                                  try {
+                                    changeDocument((doc) =>
+                                      mergeWithNext(doc, row.id),
+                                    );
+                                    notify('已合并，两段制作说明均已保留。');
+                                  } catch (cause) {
+                                    notify((cause as Error).message);
+                                  }
+                                }}
+                              >
+                                <Combine />
+                                与下一段合并
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={
+                                  script.segments.length >= LIMITS.segments
                                 }
-                              }}
-                            >
-                              <Combine />
-                              与下一段合并
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={
-                                script.segments.length >= LIMITS.segments
-                              }
-                              onClick={() =>
-                                changeDocument((doc) => {
-                                  const rows = [...doc.segments];
-                                  const position = rows.findIndex(
-                                    (item) => item.id === row.id,
-                                  );
-                                  rows.splice(position + 1, 0, {
-                                    ...rows[position],
-                                    id: newId(),
-                                  });
-                                  return { ...doc, segments: rows };
-                                })
-                              }
-                            >
-                              <Copy />
-                              复制这一段
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              disabled={index === 0}
-                              onClick={() =>
-                                changeDocument((doc) =>
-                                  moveSegment(doc, row.id, -1),
-                                )
-                              }
-                            >
-                              <ArrowUp />
-                              上移
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={index === script.segments.length - 1}
-                              onClick={() =>
-                                changeDocument((doc) =>
-                                  moveSegment(doc, row.id, 1),
-                                )
-                              }
-                            >
-                              <ArrowDown />
-                              下移
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              variant="destructive"
-                              onClick={() => removeSegment(row.id, index)}
-                            >
-                              <Trash2 />
-                              删除这一段
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                                onClick={() =>
+                                  changeDocument((doc) => {
+                                    const rows = [...doc.segments];
+                                    const position = rows.findIndex(
+                                      (item) => item.id === row.id,
+                                    );
+                                    rows.splice(position + 1, 0, {
+                                      ...rows[position],
+                                      id: newId(),
+                                    });
+                                    return { ...doc, segments: rows };
+                                  })
+                                }
+                              >
+                                <Copy />
+                                复制这一段
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setMovingId(row.id);
+                                  setMoveTarget(index + 1);
+                                }}
+                              >
+                                <MoveVertical />
+                                移动至…
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={index === 0}
+                                onClick={() =>
+                                  changeDocument((doc) =>
+                                    moveSegment(doc, row.id, -1),
+                                  )
+                                }
+                              >
+                                <ArrowUp />
+                                上移
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={index === script.segments.length - 1}
+                                onClick={() =>
+                                  changeDocument((doc) =>
+                                    moveSegment(doc, row.id, 1),
+                                  )
+                                }
+                              >
+                                <ArrowDown />
+                                下移
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onClick={() => removeSegment(row.id, index)}
+                              >
+                                <Trash2 />
+                                删除这一段
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </div>
                       <AutoTextarea
                         id={`narration-${row.id}`}
@@ -1064,7 +1201,7 @@ export function ScriptEditor() {
                         />
                       </label>
                     </div>
-                  </section>
+                  </div>
                 );
               })}
             </div>
@@ -1246,6 +1383,60 @@ export function ScriptEditor() {
               恢复自动估时
             </Button>
             <Button onClick={() => setTimingId(null)}>完成</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!movingRow}
+        onOpenChange={(open) => {
+          if (!open) setMovingId(null);
+        }}
+      >
+        <DialogContent className="settings-dialog move-dialog">
+          <DialogHeader>
+            <DialogTitle>
+              移动第 {movingIndex >= 0 ? movingIndex + 1 : ''} 段
+            </DialogTitle>
+            <DialogDescription>
+              输入目标段落号，当前段落会插入到它的上方。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="form-row">
+            <label htmlFor="move-target">
+              目标段落 <small>可输入 1–{script.segments.length}</small>
+            </label>
+            <NumberField
+              id="move-target"
+              aria-label="目标段落"
+              min={1}
+              max={script.segments.length}
+              step="1"
+              value={moveTarget}
+              onChange={(value) => {
+                if (value !== null) setMoveTarget(value);
+              }}
+            />
+          </div>
+          <p className="form-help move-target-help">
+            {moveTargetRow
+              ? `将插入到当前第 ${moveTarget} 段“${moveTargetRow.title || '未命名段落'}”上方，目标及以下段落顺延。`
+              : '请输入有效的目标段落号。'}
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMovingId(null)}>
+              取消
+            </Button>
+            <Button
+              disabled={!canMove}
+              onClick={() => {
+                if (movingRow && moveTargetRow)
+                  moveBefore(movingRow.id, moveTargetRow.id);
+                setMovingId(null);
+              }}
+            >
+              移动
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
