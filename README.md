@@ -2,13 +2,16 @@
 
 [![CI](https://github.com/WhoKnowsNothing/mugao-script-writing/actions/workflows/ci.yml/badge.svg)](https://github.com/WhoKnowsNothing/mugao-script-writing/actions/workflows/ci.yml)
 
-以 Markdown 导出为主的个人视频写稿工具。左侧写口播，右侧记录画面、BGM / 音效和附注。不调用 AI，也不上传文案。
+以 Markdown 导出为主的个人视频写稿工具。左侧写口播，右侧记录画面、BGM / 音效和附注。
 
 当前稳定版本为 **v1.0.0**。项目以 MIT License 开源，源码托管在 [GitHub](https://github.com/WhoKnowsNothing/mugao-script-writing)。
 
 ## 使用
 
-Windows 双击项目中的 **启动幕稿.cmd**，等启动完成后打开。**http://localhost:3000**。运行期间保持窗口打开；关闭窗口后网页服务会停止，已保存的文案仍留在浏览器中。
+Windows 双击项目中的 **启动幕稿.cmd**，等启动完成后打开 http://localhost:3000
+
+
+运行期间保持窗口打开；关闭窗口后网页服务会停止，已保存的文案仍留在浏览器中。
 
 也可以在本目录运行（Node.js 22.13+，验证环境为 Node.js 24.13）：
 
