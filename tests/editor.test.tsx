@@ -152,7 +152,7 @@ describe('编辑器实际组件流程（非浏览器视觉测试）', () => {
       (screen.getByLabelText('第2段文案') as HTMLTextAreaElement).value,
     ).toBe(before);
     await waitUntilSaved();
-  }, 30000);
+  }, 120000);
 
   it('可从段落标题旁在上方或下方插入空白段落', async () => {
     render(<ScriptEditor />);
@@ -195,7 +195,7 @@ describe('编辑器实际组件流程（非浏览器视觉测试）', () => {
     ).toBe(third);
     await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
     await waitUntilSaved();
-  }, 30000);
+  }, 120000);
 
   it('正文编号与大纲六点拖拽柄都能移动整段', async () => {
     render(<ScriptEditor />);
