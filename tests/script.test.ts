@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   countText,
   createScript,
@@ -8,6 +8,7 @@ import {
   mergeWithNext,
   moveSegment,
   moveSegmentBefore,
+  newId,
   parseBackup,
   sampleWorkspace,
   scriptStats,
@@ -26,6 +27,35 @@ import {
   exportMarkdown,
   safeFilename,
 } from '@/lib/export-markdown';
+
+it('普通 HTTP 环境没有 randomUUID 时仍可新建和备份脚本', () => {
+  const getRandomValues = crypto.getRandomValues.bind(crypto);
+  vi.stubGlobal('crypto', { getRandomValues });
+  try {
+    expect(newId()).toMatch(
+      /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,
+    );
+    const workspace = sampleWorkspace();
+    expect(parseBackup(exportBackup(workspace)).documents).toEqual(
+      workspace.documents,
+    );
+    expect(
+      new Set(
+        workspace.documents.flatMap((doc) => [
+          doc.id,
+          ...doc.segments.map((row) => row.id),
+        ]),
+      ).size,
+    ).toBe(
+      workspace.documents.reduce(
+        (total, doc) => total + 1 + doc.segments.length,
+        0,
+      ),
+    );
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 
 describe('文字与口播估时', () => {
   it('按 Unicode 字符统计，排除标点、空白和 emoji，英文按词估时', () => {

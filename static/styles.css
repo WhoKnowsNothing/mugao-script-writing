@@ -1,0 +1,4 @@
+@import '../app/globals.css';
+@import '../app/editor.css';
+
+@source '../components';

@@ -67,6 +67,18 @@ Markdown 会转义特殊字符，表格换行使用 `<br>`。粘贴进去的正�
 
 ## 开发与验证
 
+### 合入个人网站
+
+运行 `npm run build:static` 可生成 `out/mugao/`，部署路径固定为 `/mugao/`。
+这个版本复用同一套编辑器、浏览器存储和导出功能，只需静态文件服务，不需要 Node.js 后台或数据库。
+侧栏的“返回勿知鸦”链接回到 `/#mugao`，沿用个人网站现有的项目抽屉。
+
+个人网站位于 `../wuzhiya`。在该目录运行 `npm run prepare:mugao` 后，使用它的 `deploy/mugao.Dockerfile` 构建幕稿镜像；`deploy/homepage.Dockerfile` 单独构建主页镜像。共享入口将 `/mugao/` 转发给幕稿，两者可以分别更新。具体命令见个人网站的 README。
+
+首次从 localhost、Sites 或其他网址切换过来时，先在旧网址导出 JSON 备份，再到 `/mugao/` 导入；同一正式网址更新镜像不影响浏览器内的稿件。
+
+### 检查命令
+
 ```sh
 npm run typecheck
 npm run lint

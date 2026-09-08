@@ -81,12 +81,47 @@ button:not(:disabled),
   font-weight: 650;
   letter-spacing: 0.06em;
 }
+.home-link {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  margin: 0 0 12px;
+  padding: 6px 9px;
+  color: var(--mg-text-secondary);
+  font-size: 14px;
+  border-radius: 6px;
+}
+.home-link:hover {
+  color: var(--primary);
+  background: var(--accent);
+}
+.home-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
 .brand small {
+  position: relative;
+  display: inline-block;
   font-size: 10px;
   letter-spacing: 0.13em;
   color: var(--mg-text-muted);
   margin-left: 5px;
   font-weight: 500;
+}
+
+.brand-beta {
+  position: absolute;
+  top: -8px;
+  left: calc(100% + 3px);
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--primary);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.2;
 }
 .brand-mark {
   display: flex;

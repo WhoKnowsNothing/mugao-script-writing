@@ -13,6 +13,7 @@ import {
   AlignLeft,
   ArrowDown,
   ArrowDownToLine,
+  ArrowLeft,
   ArrowUp,
   BetweenVerticalEnd,
   BetweenVerticalStart,
@@ -116,7 +117,7 @@ type Confirmation = {
   label?: string;
 };
 
-export function ScriptEditor() {
+export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
   const editor = useWorkspace();
   const { workspace, ready, commit, undo, redo, save } = editor;
   const script = activeScript(workspace);
@@ -501,9 +502,15 @@ export function ScriptEditor() {
           <Clapperboard size={20} />
         </span>
         <span>
-          幕稿 <small>MUGAO</small>
+          幕稿 <small>MUGAO<span className="brand-beta">Beta</span></small>
         </span>
       </div>
+      {homeHref && (
+        <a className="home-link" href={homeHref}>
+          <ArrowLeft size={14} aria-hidden="true" />
+          返回勿知鸦
+        </a>
+      )}
       <Button
         variant="outline"
         className="new-document"
@@ -1548,6 +1555,10 @@ export function ScriptEditor() {
             <Button
               variant="outline"
               onClick={() => {
+                if (!navigator.clipboard?.writeText) {
+                  notify('当前访问方式不支持复制，请使用下载按钮。');
+                  return;
+                }
                 void navigator.clipboard
                   .writeText(markdown)
                   .then(() => notify('Markdown 已复制。'))
