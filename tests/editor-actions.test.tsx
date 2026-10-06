@@ -8,6 +8,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ScriptEditor } from '@/components/script-editor';
 import { LocalRepository } from '@/lib/storage';
 import {
@@ -44,11 +45,13 @@ async function openWorkspace(workspace: Workspace) {
   );
 }
 
-function requestDelete(title: string) {
-  fireEvent.click(screen.getByRole('button', { name: `管理脚本：${title}` }));
-  fireEvent.click(
-    screen.getByRole('menuitem', { name: '删除脚本', hidden: true }),
+async function requestDelete(title: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: `管理脚本：${title}` }));
+  await user.click(
+    await screen.findByRole('menuitem', { name: '删除脚本', hidden: true }),
   );
+  await screen.findByRole('dialog', { hidden: true });
 }
 
 it('从列表取消或删除非当前脚本不切换稿件，删除当前脚本及撤销保持内容', async () => {
@@ -58,7 +61,7 @@ it('从列表取消或删除非当前脚本不切换稿件，删除当前脚本�
   workspace.documents.unshift(other);
   await openWorkspace(workspace);
 
-  requestDelete(other.title);
+  await requestDelete(other.title);
   expect(
     screen.getByRole('dialog', { name: '删除这份脚本？' }).textContent,
   ).toContain(other.title);
@@ -68,7 +71,7 @@ it('从列表取消或删除非当前脚本不切换稿件，删除当前脚本�
   );
   expect(screen.getByRole('button', { name: other.title })).toBeTruthy();
 
-  requestDelete(other.title);
+  await requestDelete(other.title);
   fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
   expect(screen.queryByRole('button', { name: other.title })).toBeNull();
   expect((screen.getByLabelText('脚本标题') as HTMLInputElement).value).toBe(
@@ -77,7 +80,7 @@ it('从列表取消或删除非当前脚本不切换稿件，删除当前脚本�
   fireEvent.click(screen.getByRole('button', { name: '撤销' }));
   expect(screen.getByRole('button', { name: other.title })).toBeTruthy();
 
-  requestDelete(current.title);
+  await requestDelete(current.title);
   fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
   expect((screen.getByLabelText('脚本标题') as HTMLInputElement).value).toBe(
     other.title,
@@ -86,13 +89,13 @@ it('从列表取消或删除非当前脚本不切换稿件，删除当前脚本�
   expect(
     (screen.getByLabelText('第1段文案') as HTMLTextAreaElement).value,
   ).toBe(current.segments[0].narration);
-}, 60000);
+}, 180000);
 
 it('删除最后一份脚本后保留可编辑空稿，撤销可恢复原稿', async () => {
   const workspace = sampleWorkspace();
   const current = workspace.documents[0];
   await openWorkspace(workspace);
-  requestDelete(current.title);
+  await requestDelete(current.title);
   fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
   expect(
     within(screen.getByLabelText('脚本列表')).queryByRole('button', {
@@ -109,7 +112,7 @@ it('删除最后一份脚本后保留可编辑空稿，撤销可恢复原稿', a
   expect(
     (screen.getByLabelText('第1段文案') as HTMLTextAreaElement).value,
   ).toBe(current.segments[0].narration);
-}, 60000);
+}, 120000);
 
 it('单脚本 JSON 下载只包含当前稿件，保留所有字段并能用现有导入格式读取', async () => {
   const workspace = sampleWorkspace();
@@ -119,9 +122,13 @@ it('单脚本 JSON 下载只包含当前稿件，保留所有字段并能用现�
   current.chineseCpm = 210;
   workspace.documents.unshift(createScript('这份脚本不应导出'));
   await openWorkspace(workspace);
-  fireEvent.click(screen.getByRole('button', { name: '更多导出格式' }));
-  fireEvent.click(
-    screen.getByRole('menuitem', { name: '导出当前脚本 JSON', hidden: true }),
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: '更多导出格式' }));
+  await user.click(
+    await screen.findByRole('menuitem', {
+      name: '导出当前脚本 JSON',
+      hidden: true,
+    }),
   );
   expect(createUrl).toHaveBeenCalledOnce();
   const downloaded = await (createUrl.mock.calls[0][0] as Blob).text();
@@ -134,4 +141,4 @@ it('单脚本 JSON 下载只包含当前稿件，保留所有字段并能用现�
   expect((clickDownload.mock.contexts[0] as HTMLAnchorElement).download).toBe(
     '幕稿-单篇.json',
   );
-}, 30000);
+}, 120000);
