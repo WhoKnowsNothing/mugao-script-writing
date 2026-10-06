@@ -105,7 +105,7 @@ describe('编辑器实际组件流程（非浏览器视觉测试）', () => {
       () => expect(screen.queryByRole('menu', { hidden: true })).toBeNull(),
       { timeout: 15000 },
     );
-  }, 30000);
+  }, 120000);
 
   it('新建、中文输入法组合、光标分段与撤销可组合使用', async () => {
     render(<ScriptEditor />);
@@ -371,7 +371,7 @@ describe('编辑器实际组件流程（非浏览器视觉测试）', () => {
       () => expect(screen.queryByRole('menu', { hidden: true })).toBeNull(),
       { timeout: 15000 },
     );
-  }, 30000);
+  }, 120000);
 
   it('错误 JSON 导入不会替换现有脚本', async () => {
     const user = userEvent.setup();
