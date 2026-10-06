@@ -207,7 +207,8 @@ export function AiSettingsForm({
               <span>在此浏览器记住 API Key</span>
             </label>
             <p className="form-help">
-              默认仅保存在当前标签页，刷新可继续使用，关闭标签页后清除。勾选后密钥将以明文保存在此网站的浏览器存储中。密钥不随稿件备份导出。
+              默认记住地址、模型和 API
+              Key，保存后刷新或重新打开浏览器均可继续使用。密钥以明文保存在此网站的浏览器存储中，不随稿件备份导出。取消勾选后，密钥仅保留到当前标签页关闭。
             </p>
             <Button
               type="button"
@@ -218,7 +219,6 @@ export function AiSettingsForm({
                   ...settings,
                   text: { ...settings.text, apiKey: '' },
                   image: { ...settings.image, apiKey: '' },
-                  rememberKeys: false,
                 };
                 try {
                   onSave(next);

@@ -7,7 +7,7 @@ export interface ApiConnection {
 }
 
 export interface AiSettings {
-  version: 1;
+  version: 2;
   text: ApiConnection;
   image: ApiConnection;
   imageSize: string;
@@ -23,7 +23,7 @@ export const SESSION_KEYS_KEY = 'mugao-ai-session-keys-v1';
 
 export function defaultAiSettings(): AiSettings {
   return {
-    version: 1,
+    version: 2,
     text: { baseUrl: '', model: '', apiKey: '' },
     image: { baseUrl: '', model: '', apiKey: '' },
     imageSize: '',
@@ -31,7 +31,7 @@ export function defaultAiSettings(): AiSettings {
     writingStyle: '',
     platforms: [...PLATFORM_IDS],
     customRules: '',
-    rememberKeys: false,
+    rememberKeys: true,
   };
 }
 
@@ -84,18 +84,29 @@ export function readAiSettings(local: Storage, session: Storage): AiSettings {
   const raw = local.getItem(SETTINGS_KEY);
   if (!raw) return result;
   const parsed = JSON.parse(raw);
-  if (!parsed || parsed.version !== 1)
+  if (!parsed || (parsed.version !== 1 && parsed.version !== 2))
     throw new Error('AI 设置版本不支持，请重新保存设置。');
-  result.rememberKeys = parsed.rememberKeys === true;
-  const keys = result.rememberKeys
-    ? parsed
-    : JSON.parse(session.getItem(SESSION_KEYS_KEY) || '{}');
+  const keysSavedLocally =
+    parsed.rememberKeys === true ||
+    (parsed.version === 2 && parsed.rememberKeys !== false);
+  // Version 1 used tab-only keys by default. Upgrade that default while
+  // keeping an explicit opt-out saved with version 2.
+  result.rememberKeys = parsed.version === 1 || keysSavedLocally;
+  let keys = parsed;
+  if (!keysSavedLocally) {
+    try {
+      keys = JSON.parse(session.getItem(SESSION_KEYS_KEY) || '{}');
+    } catch {
+      // A missing or unreadable tab key must not hide saved URLs and styles.
+      keys = {};
+    }
+  }
   for (const kind of ['text', 'image'] as const) {
     const baseUrl = text(parsed[kind]?.baseUrl, 2000);
     // localStorage is shared across tabs, sessionStorage is not. Never pair
     // another tab's newly saved endpoint with this tab's old credentials.
     const matchingEndpoint =
-      result.rememberKeys || keys?.[kind]?.baseUrl === baseUrl;
+      keysSavedLocally || keys?.[kind]?.baseUrl === baseUrl;
     result[kind] = {
       baseUrl,
       model: text(parsed[kind]?.model, 200),

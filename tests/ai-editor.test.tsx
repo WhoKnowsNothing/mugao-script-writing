@@ -6,13 +6,13 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ScriptEditor } from '@/components/script-editor';
 import { AiAssistant } from '@/components/ai-assistant';
 import {
   defaultAiSettings,
+  readAiSettings,
   saveAiSettings,
   SETTINGS_KEY,
 } from '@/lib/ai/settings';
@@ -123,10 +123,14 @@ describe('AI editor workflows', () => {
       expect(doc.segments[0]).toEqual(row);
     },
   );
-  it('saves both connections and fixed styles without sending manuscript or persisting keys by default', async () => {
-    render(<ScriptEditor />);
+  it('remembers both connections and fixed styles by default after reopening the editor', async () => {
+    const view = render(<ScriptEditor />);
     await saved();
     fireEvent.click(screen.getByRole('button', { name: 'AI 设置' }));
+    expect(
+      (screen.getByLabelText('在此浏览器记住 API Key') as HTMLInputElement)
+        .checked,
+    ).toBe(true);
     const fields = [
       ['文字 API 基础地址', 'https://text.test/v1'],
       ['文字模型', 'writing-model'],
@@ -144,15 +148,69 @@ describe('AI editor workflows', () => {
       });
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }));
     expect(localStorage.getItem(SETTINGS_KEY)).toContain('低饱和纸感');
-    expect(localStorage.getItem(SETTINGS_KEY)).not.toContain('fake-secret');
+    expect(localStorage.getItem(SETTINGS_KEY)).toContain('fake-secret');
     expect(fetch).not.toHaveBeenCalled();
-    fireEvent.click(
-      within(screen.getByRole('dialog')).getByRole('button', {
-        name: 'AI 设置',
-      }),
+    view.unmount();
+    sessionStorage.clear();
+    render(<ScriptEditor />);
+    await saved();
+    fireEvent.click(screen.getByRole('button', { name: 'AI 设置' }));
+    for (const [label, expected] of fields) expect(value(label)).toBe(expected);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('keeps addresses but forgets keys after reopening when remember keys is unchecked', () => {
+    configure();
+    const props = {
+      script: sampleWorkspace().documents[0],
+      launch: { task: 'settings' as const, scope: 'all' as const },
+      onClose: vi.fn(),
+      onApply: vi.fn(),
+      onLocate: vi.fn(),
+    };
+    const view = render(<AiAssistant {...props} />);
+    fireEvent.click(screen.getByLabelText('在此浏览器记住 API Key'));
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }));
+    expect(localStorage.getItem(SETTINGS_KEY)).not.toContain('fake-test-key');
+    view.unmount();
+    sessionStorage.clear();
+    render(<AiAssistant {...props} />);
+    expect(value('文字 API 基础地址')).toBe('https://example.test/v1');
+    expect(value('生图 API 基础地址')).toBe('https://image.test/v1');
+    expect(value('文字模型')).toBe('text-demo');
+    expect(value('生图模型')).toBe('image-demo');
+    expect(value('文字 API Key')).toBe('');
+    expect(value('生图 API Key')).toBe('');
+    expect(
+      (screen.getByLabelText('在此浏览器记住 API Key') as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('clears both saved keys without changing the remember preference or addresses', () => {
+    configure();
+    render(
+      <AiAssistant
+        script={sampleWorkspace().documents[0]}
+        launch={{ task: 'settings', scope: 'all' }}
+        onClose={vi.fn()}
+        onApply={vi.fn()}
+        onLocate={vi.fn()}
+      />,
     );
-    expect(value('画面风格')).toBe('低饱和纸感');
-    expect(value('文字 API Key')).toBe('fake-secret');
+    fireEvent.click(screen.getByRole('button', { name: '清除已存密钥' }));
+    const next = readAiSettings(localStorage, sessionStorage);
+    expect(next.rememberKeys).toBe(true);
+    expect(next.text).toEqual({
+      baseUrl: 'https://example.test/v1',
+      model: 'text-demo',
+      apiKey: '',
+    });
+    expect(next.image).toEqual({
+      baseUrl: 'https://image.test/v1',
+      model: 'image-demo',
+      apiKey: '',
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
   it('previews visual suggestions, applies once, persists and undoes using the existing editor history', async () => {
     configure();

@@ -75,30 +75,93 @@ describe('AI settings and transport', () => {
     ])
       expect(() => apiEndpoint(url, 'text')).toThrow();
   });
-  it('keeps keys in the tab by default, persists preferences, and removes remembered keys', () => {
+  it('remembers both connections and preferences by default across tab sessions', () => {
     const settings = {
       ...configured(),
       visualStyle: '纸感',
       writingStyle: '短句',
       customRules: '视频号：核对最新规则',
     };
+    expect(settings.rememberKeys).toBe(true);
     saveAiSettings(settings, localStorage, sessionStorage);
+    expect(localStorage.getItem(SETTINGS_KEY)).toContain('private-text-key');
+    expect(localStorage.getItem(SETTINGS_KEY)).toContain('private-image-key');
+    expect(sessionStorage.getItem(SESSION_KEYS_KEY)).toBeNull();
+    sessionStorage.clear();
+    expect(readAiSettings(localStorage, sessionStorage)).toEqual(settings);
+  });
+  it('honors opting out, removes remembered keys, and keeps addresses across tab sessions', () => {
+    const settings = configured();
+    saveAiSettings(settings, localStorage, sessionStorage);
+    const tabOnly = { ...settings, rememberKeys: false };
+    saveAiSettings(tabOnly, localStorage, sessionStorage);
     expect(localStorage.getItem(SETTINGS_KEY)).not.toContain('private-');
     expect(sessionStorage.getItem(SESSION_KEYS_KEY)).toContain(
       'private-text-key',
     );
-    expect(readAiSettings(localStorage, sessionStorage)).toEqual(settings);
+    expect(readAiSettings(localStorage, sessionStorage)).toEqual(tabOnly);
     sessionStorage.clear();
-    expect(readAiSettings(localStorage, sessionStorage).text.apiKey).toBe('');
-    saveAiSettings(
-      { ...settings, rememberKeys: true },
-      localStorage,
-      sessionStorage,
+    expect(readAiSettings(localStorage, sessionStorage)).toEqual({
+      ...tabOnly,
+      text: { ...settings.text, apiKey: '' },
+      image: { ...settings.image, apiKey: '' },
+    });
+  });
+  it('upgrades the old tab-only default and retains matching keys for the next save', () => {
+    const settings = configured();
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({
+        ...settings,
+        version: 1,
+        rememberKeys: false,
+        text: { ...settings.text, apiKey: '' },
+        image: { ...settings.image, apiKey: '' },
+      }),
     );
-    expect(localStorage.getItem(SETTINGS_KEY)).toContain('private-image-key');
-    expect(sessionStorage.getItem(SESSION_KEYS_KEY)).toBeNull();
-    saveAiSettings(settings, localStorage, sessionStorage);
-    expect(localStorage.getItem(SETTINGS_KEY)).not.toContain('private-');
+    sessionStorage.setItem(
+      SESSION_KEYS_KEY,
+      JSON.stringify({ text: settings.text, image: settings.image }),
+    );
+    const upgraded = readAiSettings(localStorage, sessionStorage);
+    expect(upgraded).toEqual(settings);
+    saveAiSettings(upgraded, localStorage, sessionStorage);
+    sessionStorage.clear();
+    expect(readAiSettings(localStorage, sessionStorage)).toEqual(settings);
+  });
+  it.each(['malformed', 'blocked'])(
+    'retains saved addresses and preferences when tab key storage is %s',
+    (failure) => {
+      const settings = { ...configured(), rememberKeys: false };
+      saveAiSettings(settings, localStorage, sessionStorage);
+      sessionStorage.setItem(SESSION_KEYS_KEY, '{broken');
+      const session =
+        failure === 'blocked'
+          ? ({
+              getItem: () => {
+                throw new Error('blocked');
+              },
+            } as unknown as Storage)
+          : sessionStorage;
+      expect(readAiSettings(localStorage, session)).toEqual({
+        ...settings,
+        text: { ...settings.text, apiKey: '' },
+        image: { ...settings.image, apiKey: '' },
+      });
+    },
+  );
+  it('reads legacy remembered keys without needing tab storage', () => {
+    const settings = configured();
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ ...settings, version: 1 }),
+    );
+    const session = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+    } as unknown as Storage;
+    expect(readAiSettings(localStorage, session)).toEqual(settings);
   });
   it('does not retain remembered keys if a subsequent storage write fails', () => {
     saveAiSettings(
@@ -113,11 +176,21 @@ describe('AI settings and transport', () => {
         throw new Error('full');
       },
     } as unknown as Storage;
-    expect(() => saveAiSettings(configured(), local, sessionStorage)).toThrow();
+    expect(() =>
+      saveAiSettings(
+        { ...configured(), rememberKeys: false },
+        local,
+        sessionStorage,
+      ),
+    ).toThrow();
     expect(localStorage.getItem(SETTINGS_KEY)).toBeNull();
   });
   it("never attaches this tab's key to an endpoint changed in another tab", () => {
-    saveAiSettings(configured(), localStorage, sessionStorage);
+    saveAiSettings(
+      { ...configured(), rememberKeys: false },
+      localStorage,
+      sessionStorage,
+    );
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY)!);
     saved.text.baseUrl = 'https://other-provider.example/v1';
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(saved));
