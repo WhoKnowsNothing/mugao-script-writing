@@ -34,6 +34,17 @@ yarn-error.log*
 next-env.d.ts
 /dist/
 /.wrangler/
+/.cache/
 /outputs/
 /work/
 *.tsbuildinfo
+
+# local tools, historical records, and design working files
+/.qmuse/
+/archive/
+/design/*
+!/design/README.md
+
+# packaged release artifacts
+/releases/*
+!/releases/README.md

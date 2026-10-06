@@ -4,11 +4,11 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  root: fileURLToPath(new URL('./static', import.meta.url)),
+  root: fileURLToPath(new URL('./src/static', import.meta.url)),
   base: '/mugao/',
   publicDir: fileURLToPath(new URL('./public', import.meta.url)),
   resolve: {
-    alias: { '@': fileURLToPath(new URL('.', import.meta.url)) },
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   plugins: [react()],
   css: { postcss: { plugins: [tailwindcss()] } },

@@ -15,9 +15,10 @@
 - **手机与字号适配**：窄屏自动切换段落卡片，制作说明可折叠；“显示设置”可将界面、正文和弹窗字号统一调整为 90%–150%。
 
 ## 开始使用
-可以直接访问https://wuzhiya.top/mugao/
-支持手机和电脑网页端直接使用，本地备份。
-如果想要本地部署可以：
+
+直接访问 [幕稿](https://wuzhiya.top/mugao/)，支持手机和电脑浏览器，稿件保存在本机。
+
+从 [Releases](https://github.com/WhoKnowsNothing/mugao-script-writing/releases/latest) 下载源码，或下载已编译的静态网页包部署到网站的 `/mugao/` 路径。静态包的使用说明见 [静态网页包](docs/STATIC_PACKAGE.md)。
 
 ### 在电脑上启动
 
@@ -106,3 +107,5 @@ AI 调用及连接测试可能产生服务商费用。HTTP 402 通常表示余�
 ## 开源许可与反馈
 
 项目采用 [MIT License](LICENSE)。问题或建议可提交到 [GitHub Issues](https://github.com/WhoKnowsNothing/mugao-script-writing/issues)，请勿附带私人稿件、API Key 或其他敏感信息。
+
+查找项目文件可参阅 [目录导览](docs/PROJECT_STRUCTURE.md)。

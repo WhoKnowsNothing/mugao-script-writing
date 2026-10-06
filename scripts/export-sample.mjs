@@ -1,9 +1,9 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Packer } from 'docx';
-import { buildWordDocument } from '../lib/export-docx.ts';
-import { exportBackup, exportMarkdown } from '../lib/export-markdown.ts';
-import { sampleWorkspace } from '../lib/script.ts';
+import { buildWordDocument } from '../src/lib/export-docx.ts';
+import { exportBackup, exportMarkdown } from '../src/lib/export-markdown.ts';
+import { sampleWorkspace } from '../src/lib/script.ts';
 
 const destination = process.argv[2];
 if (!destination) throw new Error('Pass an explicit output directory.');
