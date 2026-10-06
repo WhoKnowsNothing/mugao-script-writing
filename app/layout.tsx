@@ -1,6 +1,14 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import './editor.css';
+import './ai.css';
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#f1f0ec',
+};
 
 export const metadata: Metadata = {
   title: '幕稿 · 视频脚本编辑器',

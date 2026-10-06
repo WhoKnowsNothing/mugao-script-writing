@@ -115,6 +115,13 @@ describe('段落结构操作', () => {
     expect(moveSegmentBefore(script, first.id, second.id)).toBe(script);
     expect(moveSegmentBefore(script, first.id, first.id)).toBe(script);
     expect(moveSegmentBefore(script, 'missing', third.id)).toBe(script);
+    expect(moveSegmentBefore(script, first.id, null).segments).toEqual([
+      second,
+      third,
+      first,
+    ]);
+    expect(moveSegmentBefore(script, third.id, null)).toBe(script);
+    expect(moveSegmentBefore(script, 'missing', null)).toBe(script);
   });
   it('分段不丢字、不切开 emoji，停顿跟随末尾，制作说明不重复', () => {
     const script = createScript();

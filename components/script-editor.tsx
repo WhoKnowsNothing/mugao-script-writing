@@ -50,6 +50,10 @@ import {
   X,
   Combine,
   TriangleAlert,
+  Sparkles,
+  ImagePlus,
+  Settings2,
+  Type,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -71,6 +75,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { AutoTextarea, NumberField } from '@/components/editor-fields';
 import { useWorkspace } from '@/hooks/use-workspace';
+import { usePointerReorder } from '@/hooks/use-pointer-reorder';
 import {
   activeScript,
   countText,
@@ -97,10 +102,20 @@ import {
   downloadBlob,
   exportBackup,
   exportMarkdown,
+  exportScriptJson,
   safeFilename,
   type MarkdownLayout,
 } from '@/lib/export-markdown';
 import type { Snapshot } from '@/lib/storage';
+import { AiAssistant, type AiLaunch } from '@/components/ai-assistant';
+import { applyAiResult, inputStillMatches } from '@/lib/ai/tasks';
+import { DisplaySettings } from '@/components/display-settings';
+import { SegmentImage } from '@/components/segment-image';
+import {
+  IMAGE_ACCEPT,
+  imageDataUrl,
+  validateSegmentImage,
+} from '@/lib/segment-image';
 
 const statusLabels = {
   loading: '正在读取本机脚本',
@@ -121,9 +136,15 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
   const editor = useWorkspace();
   const { workspace, ready, commit, undo, redo, save } = editor;
   const script = activeScript(workspace);
+  const hasImages = script.segments.some((row) => row.image);
   const stats = useMemo(() => scriptStats(script), [script]);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsedDirections, setCollapsedDirections] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [displayOpen, setDisplayOpen] = useState(false);
+  const [aiLaunch, setAiLaunch] = useState<AiLaunch | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -143,6 +164,12 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
   const [importTitle, setImportTitle] = useState('');
   const [importError, setImportError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
+  const imageTarget = useRef<{
+    scriptId: string;
+    segmentId: string;
+    previous?: string;
+  } | null>(null);
   const titleInput = useRef<HTMLInputElement>(null);
   const selection = useRef<{ id: string; offset: number } | null>(null);
   const composing = useRef(false);
@@ -185,6 +212,58 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
     [changeDocument],
   );
 
+  const setSegmentImage = (
+    scriptId: string,
+    segmentId: string,
+    src: string | undefined,
+    previous?: string,
+  ) => {
+    const image = validateSegmentImage(src);
+    commit((current) => {
+      const doc = current.documents.find((item) => item.id === scriptId);
+      const row = doc?.segments.find((item) => item.id === segmentId);
+      if (!doc || !row) throw new Error('目标段落已删除，配图未添加。');
+      if (row.image !== previous)
+        throw new Error('这段配图已发生变化，未覆盖新图片。请重新添加。');
+      const next = replaceScript(current, {
+        ...doc,
+        segments: doc.segments.map((item) =>
+          item.id === segmentId ? { ...item, image } : item,
+        ),
+      });
+      if (
+        image &&
+        new TextEncoder().encode(exportBackup(next)).byteLength >
+          LIMITS.fileBytes
+      )
+        throw new Error(
+          '配图加入后备份将超过 128 MB，请缩小图片或整理现有稿件。',
+        );
+      return next;
+    });
+  };
+
+  const chooseImage = (row: Segment) => {
+    imageTarget.current = {
+      scriptId: script.id,
+      segmentId: row.id,
+      previous: row.image,
+    };
+    imageInput.current?.click();
+  };
+
+  const uploadImage = async (file: File | undefined) => {
+    const target = imageTarget.current;
+    if (!file || !target) return;
+    try {
+      const src = await imageDataUrl(file);
+      setSegmentImage(target.scriptId, target.segmentId, src, target.previous);
+      notify('配图已添加，可撤销。');
+    } catch (cause) {
+      notify((cause as Error).message);
+    }
+  };
+
   const addSegment = useCallback(
     (referenceId?: string, placement: 'before' | 'after' = 'after') => {
       if (scriptRef.current.segments.length >= LIMITS.segments) {
@@ -210,7 +289,7 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
   );
 
   const moveBefore = useCallback(
-    (id: string, targetId: string) => {
+    (id: string, targetId: string | null) => {
       const current = scriptRef.current;
       const moving = current.segments.find((row) => row.id === id);
       const next = moveSegmentBefore(current, id, targetId);
@@ -226,8 +305,16 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
     [changeDocument, notify],
   );
 
+  const pointerReorder = usePointerReorder(script.id, moveBefore);
+  const dropPosition = (id: string, list: string) =>
+    pointerReorder.drag?.list === list &&
+    pointerReorder.drag.target?.markerId === id
+      ? pointerReorder.drag.target.edge
+      : undefined;
+
   const startSegmentDrag = useCallback(
     (event: ReactDragEvent<HTMLElement>, id: string) => {
+      if (event.defaultPrevented) return;
       dragSourceId.current = id;
       setDraggingId(id);
       setDropTargetId(null);
@@ -328,6 +415,17 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
     notify('备份已发起下载，包含本机全部脚本。');
   }, [workspace, notify]);
 
+  const downloadScriptJson = () => {
+    const exporting = scriptRef.current;
+    downloadBlob(
+      new Blob([exportScriptJson(exporting)], {
+        type: 'application/json;charset=utf-8',
+      }),
+      `${safeFilename(exporting.title)}.json`,
+    );
+    notify('当前脚本 JSON 已发起下载，可通过导入备份恢复。');
+  };
+
   const downloadMarkdown = useCallback(
     (layout: MarkdownLayout = 'table') => {
       downloadBlob(
@@ -402,7 +500,7 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
     setImportError('');
     try {
       if (file.size > LIMITS.fileBytes)
-        throw new Error('备份文件不能超过 8 MB。');
+        throw new Error('备份文件不能超过 128 MB。');
       const imported = parseBackup(await file.text());
       if (
         workspace.documents.length + imported.documents.length >
@@ -461,7 +559,7 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
     setConfirmation({
       title: `删除第 ${String(index + 1).padStart(2, '0')} 段？`,
       description:
-        '这一段的文案、画面、BGM 和附注会一起删除。之后仍可通过撤销恢复。',
+        '这一段的文案、画面、BGM、附注和配图会一起删除。之后仍可通过撤销恢复。',
       action: () =>
         changeDocument((doc) => {
           const rows = doc.segments.filter((row) => row.id !== id);
@@ -471,16 +569,22 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
           };
         }),
     });
-  const removeDocument = () => {
-    const id = script.id;
+  const removeDocument = (target: Script) => {
+    const id = target.id;
+    setMobileOpen(false);
     setConfirmation({
       title: '删除这份脚本？',
-      description: `“${script.title || '未命名脚本'}”将从本机脚本列表移除。建议先下载备份；本次操作可以撤销。`,
+      description: `“${target.title || '未命名脚本'}”将从本机脚本列表移除。本次操作可以撤销。`,
       action: () =>
         commit((previous) => {
           const docs = previous.documents.filter((doc) => doc.id !== id);
+          if (docs.length === previous.documents.length) return previous;
           if (!docs.length) docs.push(createScript());
-          return { ...previous, documents: docs, activeId: docs[0].id };
+          return {
+            ...previous,
+            documents: docs,
+            activeId: previous.activeId === id ? docs[0].id : previous.activeId,
+          };
         }),
     });
   };
@@ -502,7 +606,10 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
           <Clapperboard size={20} />
         </span>
         <span>
-          幕稿 <small>MUGAO<span className="brand-beta">Beta</span></small>
+          幕稿{' '}
+          <small>
+            MUGAO<span className="brand-beta">Beta</span>
+          </small>
         </span>
       </div>
       {homeHref && (
@@ -525,32 +632,67 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
       </div>
       <nav className="document-list" aria-label="脚本列表">
         {workspace.documents.map((doc) => (
-          <button
-            type="button"
-            className={`document-link ${doc.id === script.id ? 'active' : ''}`}
-            aria-current={doc.id === script.id ? 'page' : undefined}
-            key={doc.id}
-            disabled={!ready}
-            title={doc.title || '未命名脚本'}
-            onClick={() => {
-              if (doc.id !== script.id)
-                commit((previous) => ({ ...previous, activeId: doc.id }));
-              setMobileOpen(false);
-            }}
-          >
-            <FileText size={16} />
-            <span>{doc.title || '未命名脚本'}</span>
-          </button>
+          <div className="document-list-item" key={doc.id}>
+            <button
+              type="button"
+              className={`document-link ${doc.id === script.id ? 'active' : ''}`}
+              aria-current={doc.id === script.id ? 'page' : undefined}
+              disabled={!ready}
+              title={doc.title || '未命名脚本'}
+              onClick={() => {
+                if (doc.id !== script.id)
+                  commit((previous) => ({ ...previous, activeId: doc.id }));
+                setMobileOpen(false);
+              }}
+            >
+              <FileText size={16} />
+              <span>{doc.title || '未命名脚本'}</span>
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="document-list-menu"
+                    disabled={!ready}
+                    aria-label={`管理脚本：${doc.title || '未命名脚本'}`}
+                  />
+                }
+              >
+                <MoreHorizontal size={16} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => removeDocument(doc)}
+                >
+                  <Trash2 />
+                  删除脚本
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         ))}
       </nav>
       <div className="sidebar-label outline-label">
         段落大纲 <span>{script.segments.length}</span>
       </div>
-      <nav className="segment-outline" aria-label="段落大纲">
+      <nav
+        className="segment-outline"
+        aria-label="段落大纲"
+        data-reorder-list="outline"
+        data-reorder-scroll
+      >
         {script.segments.map((row, i) => (
           <div
             key={row.id}
-            className={`outline-item${draggingId === row.id ? ' is-dragging' : ''}${dropTargetId === row.id ? ' is-drop-target' : ''}`}
+            className={`outline-item${(draggingId ?? pointerReorder.drag?.id) === row.id ? ' is-dragging' : ''}${dropTargetId === row.id ? ' is-drop-target' : ''}`}
+            data-reorder-id={row.id}
+            data-pointer-dragging={
+              pointerReorder.drag?.id === row.id || undefined
+            }
+            data-drop-position={dropPosition(row.id, 'outline')}
             onDragOver={(event) => dragOverSegment(event, row.id)}
             onDrop={(event) => dropSegment(event, row.id)}
           >
@@ -560,7 +702,8 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
               draggable
               disabled={!ready}
               aria-label={`拖动大纲第${i + 1}段排序`}
-              title="拖动整段排序"
+              title="拖动排序；触屏长按半秒后拖动"
+              onPointerDown={(event) => pointerReorder.start(event, row.id)}
               onDragStart={(event) => startSegmentDrag(event, row.id)}
               onDragEnd={finishSegmentDrag}
             >
@@ -577,8 +720,32 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
         <Button
           variant="ghost"
           size="sm"
+          onClick={() => {
+            setMobileOpen(false);
+            setDisplayOpen(true);
+          }}
+        >
+          <Type size={14} />
+          显示设置
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           disabled={!ready}
           onClick={() => {
+            setMobileOpen(false);
+            setAiLaunch({ task: 'settings', scope: 'all' });
+          }}
+        >
+          <Settings2 size={14} />
+          AI 设置
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!ready}
+          onClick={() => {
+            setMobileOpen(false);
             setImportError('');
             setImportOpen(true);
           }}
@@ -594,13 +761,16 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
       <div className="sidebar-bottom">
         <LockKeyhole size={15} />
         <div>
-          你的创作，留在本地<small>无需账号 · 不上传文案</small>
+          你的创作，本机保存<small>AI 仅在主动调用时发送内容</small>
         </div>
         <button
           type="button"
           aria-label="使用说明"
           title="使用说明与隐私"
-          onClick={() => setHelpOpen(true)}
+          onClick={() => {
+            setMobileOpen(false);
+            setHelpOpen(true);
+          }}
         >
           <CircleHelp size={15} />
         </button>
@@ -648,14 +818,18 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
               size="icon-sm"
               className="mobile-menu"
               aria-label="打开脚本列表"
+              aria-expanded={mobileOpen}
               onClick={() => setMobileOpen(true)}
             >
               <Menu size={18} />
             </Button>
             <PanelLeftClose className="desktop-sidebar-icon" size={17} />
             <span>我的脚本</span>
-            <ChevronRight size={13} />
-            <strong>脚本编辑器</strong>
+            <ChevronRight className="breadcrumb-divider" size={13} />
+            <strong>
+              <span className="desktop-label">脚本编辑器</span>
+              <span className="mobile-label">幕稿</span>
+            </strong>
           </div>
           <div className="topbar-actions">
             <button
@@ -684,14 +858,17 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
               <Button
                 disabled={!ready || busy}
                 className="export-primary"
-                onClick={() => downloadMarkdown()}
+                aria-label="导出 Word"
+                onClick={() => {
+                  void downloadWord();
+                }}
               >
                 {busy ? (
                   <LoaderCircle size={15} className="spin" />
                 ) : (
                   <ArrowDownToLine size={15} />
                 )}
-                <span>导出 Markdown</span>
+                导出 Word
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger
@@ -716,18 +893,14 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
                     <AlignLeft />
                     Markdown 分段正文
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      void downloadWord();
-                    }}
-                  >
-                    <FileText />
-                    Word 表格文档 <span className="menu-note">.docx</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setPreviewOpen(true)}>
                     <BookOpen />
                     预览 / 复制 Markdown
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={downloadScriptJson}>
+                    <FileJson />
+                    导出当前脚本 JSON
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={backup}>
                     <FileJson />
@@ -738,7 +911,9 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
             </div>
           </div>
         </header>
-        <div className="workspace">
+        <div
+          className={`workspace${hasImages ? ' workspace-with-images' : ''}`}
+        >
           {editor.error && (
             <div className="storage-alert" role="alert">
               <TriangleAlert size={18} />
@@ -836,7 +1011,7 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       variant="destructive"
-                      onClick={removeDocument}
+                      onClick={() => removeDocument(script)}
                     >
                       <Trash2 />
                       删除脚本
@@ -897,7 +1072,12 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
             <div className="editor-toolbar">
               <span className="view-label">
                 <AlignLeft size={16} />
-                双栏脚本
+                <span className="desktop-label">
+                  {hasImages ? '音画脚本' : '双栏脚本'}
+                </span>
+                <span className="mobile-label">
+                  {script.segments.length} 个段落
+                </span>
               </span>
               <div className="history-buttons">
                 <Button
@@ -924,16 +1104,45 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
               <span className="toolbar-hint">
                 {script.segments.length} 个段落
               </span>
-              <Button variant="ghost" size="sm" onClick={() => addSegment()}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setAiLaunch({ task: 'polish', scope: 'all' })}
+              >
+                <Sparkles size={15} />
+                AI 助手
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={script.segments.length >= LIMITS.segments}
+                onClick={() => addSegment()}
+              >
                 <Plus size={15} />
                 新增段落
               </Button>
             </div>
-            <div className="script-sheet">
+            <input
+              ref={imageInput}
+              type="file"
+              hidden
+              accept={IMAGE_ACCEPT}
+              aria-label="选择段落配图"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                void uploadImage(file);
+              }}
+            />
+            <div
+              className={`script-sheet${hasImages ? ' has-images' : ''}`}
+              data-reorder-list="body"
+            >
               <div className="sheet-header">
                 <span>#</span>
                 <span>文案 / 口播</span>
                 <span>画面与制作说明</span>
+                {hasImages && <span>配图</span>}
               </div>
               {script.segments.map((row, index) => {
                 const timing = segmentStats(row, script);
@@ -941,8 +1150,13 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
                 const elapsed = timeline[index + 1];
                 return (
                   <div
-                    className={`script-segment${draggingId === row.id ? ' is-dragging' : ''}${dropTargetId === row.id ? ' is-drop-target' : ''}`}
+                    className={`script-segment${(draggingId ?? pointerReorder.drag?.id) === row.id ? ' is-dragging' : ''}${dropTargetId === row.id ? ' is-drop-target' : ''}`}
                     id={`segment-${row.id}`}
+                    data-reorder-id={row.id}
+                    data-pointer-dragging={
+                      pointerReorder.drag?.id === row.id || undefined
+                    }
+                    data-drop-position={dropPosition(row.id, 'body')}
                     key={row.id}
                     aria-label={`第${index + 1}段`}
                     onDragOver={(event) => dragOverSegment(event, row.id)}
@@ -954,7 +1168,10 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
                         className="segment-drag-handle"
                         draggable
                         aria-label={`拖动正文第${index + 1}段排序`}
-                        title="拖动整段排序"
+                        title="拖动排序；触屏长按半秒后拖动"
+                        onPointerDown={(event) =>
+                          pointerReorder.start(event, row.id)
+                        }
                         onDragStart={(event) => startSegmentDrag(event, row.id)}
                         onDragEnd={finishSegmentDrag}
                       >
@@ -964,6 +1181,18 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
                     </div>
                     <div className="narration-cell">
                       <div className="segment-heading">
+                        <button
+                          type="button"
+                          className="mobile-segment-handle"
+                          aria-label={`拖动手机第${index + 1}段排序`}
+                          title="长按半秒后拖动整段排序"
+                          onPointerDown={(event) =>
+                            pointerReorder.start(event, row.id)
+                          }
+                        >
+                          <GripVertical size={15} />
+                          <span>{String(index + 1).padStart(2, '0')}</span>
+                        </button>
                         <Input
                           aria-label={`第${index + 1}段标题`}
                           className="segment-title"
@@ -978,6 +1207,7 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
                           <Button
                             variant="ghost"
                             size="icon-xs"
+                            className="segment-insert-button"
                             disabled={script.segments.length >= LIMITS.segments}
                             aria-label={`在第${index + 1}段上方插入段落`}
                             title="在上方插入段落"
@@ -988,6 +1218,7 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
                           <Button
                             variant="ghost"
                             size="icon-xs"
+                            className="segment-insert-button"
                             disabled={script.segments.length >= LIMITS.segments}
                             aria-label={`在第${index + 1}段下方插入段落`}
                             title="在下方插入段落"
@@ -1012,6 +1243,18 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
                               className="segment-menu"
                             >
                               <DropdownMenuItem
+                                disabled={
+                                  script.segments.length >= LIMITS.segments
+                                }
+                                onClick={() => addSegment(row.id, 'before')}
+                              >
+                                <BetweenVerticalStart />
+                                在上方新增
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={
+                                  script.segments.length >= LIMITS.segments
+                                }
                                 onClick={() => addSegment(row.id)}
                               >
                                 <Plus />
@@ -1020,7 +1263,9 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
                               <DropdownMenuItem onClick={() => split(row.id)}>
                                 <Scissors />
                                 在光标处分段{' '}
-                                <span className="menu-note">Ctrl+Enter</span>
+                                <span className="menu-note desktop-label">
+                                  Ctrl+Enter
+                                </span>
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 disabled={index === script.segments.length - 1}
@@ -1091,16 +1336,18 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
                                 <ArrowDown />
                                 下移
                               </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onClick={() => removeSegment(row.id, index)}
-                              >
-                                <Trash2 />
-                                删除这一段
-                              </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="segment-delete-button"
+                            aria-label={`删除第${index + 1}段`}
+                            title="删除这一段"
+                            onClick={() => removeSegment(row.id, index)}
+                          >
+                            <X className="size-4" />
+                          </Button>
                         </div>
                       </div>
                       <AutoTextarea
@@ -1158,56 +1405,134 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
                         </button>
                       </div>
                     </div>
-                    <div className="direction-cell">
-                      <label htmlFor={`visual-${row.id}`}>
-                        <span>
-                          <Film size={14} />
-                          画面
-                        </span>
-                        <AutoTextarea
-                          id={`visual-${row.id}`}
-                          aria-label={`第${index + 1}段画面`}
-                          maxLength={LIMITS.text}
-                          value={row.visual}
-                          placeholder="镜头、场景、字幕……"
-                          onChange={(event) =>
-                            patchSegment(row.id, 'visual', event.target.value)
-                          }
-                        />
-                      </label>
-                      <label htmlFor={`bgm-${row.id}`}>
-                        <span>
-                          <Music2 size={14} />
-                          BGM / 音效
-                        </span>
-                        <AutoTextarea
-                          id={`bgm-${row.id}`}
-                          aria-label={`第${index + 1}段BGM`}
-                          maxLength={LIMITS.text}
-                          value={row.bgm}
-                          placeholder="音乐情绪、入点、转场音效……"
-                          onChange={(event) =>
-                            patchSegment(row.id, 'bgm', event.target.value)
-                          }
-                        />
-                      </label>
-                      <label htmlFor={`notes-${row.id}`}>
-                        <span>
-                          <StickyNote size={14} />
-                          附注
-                        </span>
-                        <AutoTextarea
-                          id={`notes-${row.id}`}
-                          aria-label={`第${index + 1}段附注`}
-                          maxLength={LIMITS.text}
-                          value={row.notes}
-                          placeholder="拍摄、剪辑时的小提醒……"
-                          onChange={(event) =>
-                            patchSegment(row.id, 'notes', event.target.value)
-                          }
-                        />
-                      </label>
+                    <div
+                      className={`direction-cell${collapsedDirections.has(row.id) ? ' is-collapsed' : ''}`}
+                    >
+                      <button
+                        type="button"
+                        className="direction-toggle"
+                        aria-label={`第${index + 1}段制作说明`}
+                        aria-expanded={!collapsedDirections.has(row.id)}
+                        aria-controls={`directions-${row.id}`}
+                        onClick={() => {
+                          setCollapsedDirections((previous) => {
+                            const next = new Set(previous);
+                            if (next.has(row.id)) next.delete(row.id);
+                            else next.add(row.id);
+                            return next;
+                          });
+                        }}
+                      >
+                        <Film size={16} />
+                        <span>画面与制作说明</span>
+                        <ChevronDown size={16} />
+                      </button>
+                      <div
+                        className="direction-fields"
+                        id={`directions-${row.id}`}
+                      >
+                        <div className="ai-segment-actions">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`第${index + 1}段画面建议`}
+                            onClick={() =>
+                              setAiLaunch({ task: 'visual', scope: row.id })
+                            }
+                          >
+                            <Sparkles size={13} />
+                            画面建议
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`第${index + 1}段生成配图`}
+                            onClick={() =>
+                              setAiLaunch({ task: 'image', scope: row.id })
+                            }
+                          >
+                            <ImagePlus size={13} />
+                            生成配图
+                          </Button>
+                          {!hasImages && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`添加第${index + 1}段配图`}
+                              onClick={() => chooseImage(row)}
+                            >
+                              <Upload size={13} />
+                              添加配图
+                            </Button>
+                          )}
+                        </div>
+                        <label htmlFor={`visual-${row.id}`}>
+                          <span>
+                            <Film size={14} />
+                            画面
+                          </span>
+                          <AutoTextarea
+                            id={`visual-${row.id}`}
+                            aria-label={`第${index + 1}段画面`}
+                            maxLength={LIMITS.text}
+                            value={row.visual}
+                            placeholder="镜头、场景、字幕……"
+                            onChange={(event) =>
+                              patchSegment(row.id, 'visual', event.target.value)
+                            }
+                          />
+                        </label>
+                        <label htmlFor={`bgm-${row.id}`}>
+                          <span>
+                            <Music2 size={14} />
+                            BGM / 音效
+                          </span>
+                          <AutoTextarea
+                            id={`bgm-${row.id}`}
+                            aria-label={`第${index + 1}段BGM`}
+                            maxLength={LIMITS.text}
+                            value={row.bgm}
+                            placeholder="音乐情绪、入点、转场音效……"
+                            onChange={(event) =>
+                              patchSegment(row.id, 'bgm', event.target.value)
+                            }
+                          />
+                        </label>
+                        <label htmlFor={`notes-${row.id}`}>
+                          <span>
+                            <StickyNote size={14} />
+                            附注
+                          </span>
+                          <AutoTextarea
+                            id={`notes-${row.id}`}
+                            aria-label={`第${index + 1}段附注`}
+                            maxLength={LIMITS.text}
+                            value={row.notes}
+                            placeholder="拍摄、剪辑时的小提醒……"
+                            onChange={(event) =>
+                              patchSegment(row.id, 'notes', event.target.value)
+                            }
+                          />
+                        </label>
+                      </div>
                     </div>
+                    {hasImages && (
+                      <SegmentImage
+                        key={row.id}
+                        src={row.image}
+                        index={index}
+                        onUpload={() => chooseImage(row)}
+                        onRemove={() => {
+                          setSegmentImage(
+                            script.id,
+                            row.id,
+                            undefined,
+                            row.image,
+                          );
+                          notify('配图已移除，可撤销。');
+                        }}
+                      />
+                    )}
                   </div>
                 );
               })}
@@ -1223,7 +1548,9 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
             </Button>
           </fieldset>
           <footer className="workspace-footer">
-            <span>Ctrl + Enter 分段 · Ctrl + Z 撤销</span>
+            <span className="desktop-label">
+              Ctrl + Enter 分段 · Ctrl + Z 撤销
+            </span>
             <button type="button" onClick={() => setHelpOpen(true)}>
               口播时长为估算值 <CircleHelp size={11} />
             </button>
@@ -1231,8 +1558,45 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
         </div>
       </main>
 
-      <Dialog open={mobileOpen} onOpenChange={setMobileOpen}>
-        <DialogContent className="sidebar-dialog">
+      {aiLaunch && (
+        <AiAssistant
+          key={script.id}
+          script={script}
+          launch={aiLaunch}
+          onClose={() => setAiLaunch(null)}
+          onApply={(input, result, append) => {
+            changeDocument((doc) => applyAiResult(doc, input, result, append));
+            notify('AI 建议已应用，可撤销。');
+          }}
+          onImage={(input, src) => {
+            if (!inputStillMatches(scriptRef.current, input))
+              throw new Error(
+                '生成期间稿件已变化，配图未自动添加；可下载后手动添加。',
+              );
+            const row = input.segments[0];
+            setSegmentImage(input.scriptId, row.id, src, row.image);
+            notify('AI 配图已添加到对应段落，可撤销。');
+          }}
+          onLocate={(segmentId) => {
+            requestAnimationFrame(() => {
+              if (segmentId)
+                document
+                  .getElementById(`segment-${segmentId}`)
+                  ?.scrollIntoView({ block: 'center' });
+              else titleInput.current?.focus();
+            });
+          }}
+        />
+      )}
+
+      <Dialog
+        open={mobileOpen}
+        onOpenChange={(open) => {
+          pointerReorder.cancel();
+          setMobileOpen(open);
+        }}
+      >
+        <DialogContent className="sidebar-dialog" placement="left">
           <DialogTitle className="sr-only">我的脚本</DialogTitle>
           <DialogDescription className="sr-only">
             选择脚本或跳转到段落
@@ -1241,12 +1605,14 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
         </DialogContent>
       </Dialog>
 
+      <DisplaySettings open={displayOpen} onOpenChange={setDisplayOpen} />
+
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent className="settings-dialog">
           <DialogHeader>
             <DialogTitle>口播速度</DialogTitle>
             <DialogDescription>
-              只统计左栏文案，不计画面、BGM 和附注。
+              只统计文案，不计画面、BGM 和附注。
             </DialogDescription>
           </DialogHeader>
           <div className="form-row">
@@ -1640,19 +2006,26 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
           <DialogHeader>
             <DialogTitle>一个专注写稿的小工具</DialogTitle>
             <DialogDescription>
-              无需注册，也没有图片生成或 AI 接口。
+              无需注册。可选接入自己的 AI 服务，辅助写稿与配图。
             </DialogDescription>
           </DialogHeader>
           <div className="help-content">
             <p>
-              <strong>写作：</strong>左侧写口播，右侧补画面、BGM
-              与附注。段落菜单支持复制、合并、上移和下移。Ctrl + Enter
-              在光标处分段，Mac 使用 ⌘。
+              <strong>写作：</strong>逐段写口播，补充画面、BGM
+              与附注。段落菜单支持分段、复制、合并和移动。
+              <span className="mobile-label">
+                手机上可收起制作说明，专注写文案。
+              </span>
+              <span className="desktop-label">
+                Ctrl + Enter 在光标处分段，Mac 使用 ⌘。
+              </span>
             </p>
             <p>
               <strong>保存：</strong>
-              编辑后自动保存到当前浏览器；看见“已保存到本机”再关闭。Ctrl + S
-              可立即保存，Ctrl + Z / Ctrl + Shift + Z 撤销和重做。
+              编辑后自动保存到当前浏览器；看见“已保存到本机”再关闭。
+              <span className="desktop-label">
+                Ctrl + S 可立即保存，Ctrl + Z / Ctrl + Shift + Z 撤销和重做。
+              </span>
             </p>
             <p>
               <strong>备份：</strong>Markdown / Word 用于阅读和交付；JSON
@@ -1660,15 +2033,24 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
             </p>
             <p>
               <strong>注意：</strong>
-              数据不会上传或跨设备同步。更换浏览器、地址或清理网站数据后，原数据不会自动出现；无痕模式关闭后也可能丢失。本机历史不等于外部备份。
+              稿件在本机保存，不跨设备同步。只有主动调用 AI
+              时，所选内容才会发送到你配置的服务。更换浏览器、地址或清理网站数据后，原数据不会自动出现；无痕模式关闭后也可能丢失。本机历史不等于外部备份。
+            </p>
+            <p>
+              <strong>AI：</strong>
+              在“AI
+              设置”填写服务地址、模型与密钥，可固定画面和文稿风格。段落内可获取画面建议或生成配图，“AI
+              助手”还支持逐段或整稿润色、平台风险审查。文字建议需预览后应用；配图自动放入对应段落，每段一张，可替换、移除或撤销。配图随本机稿件和
+              JSON 备份保存，Word / Markdown
+              仅导出文字。平台规则为有限摘要，审查不保证过审。
             </p>
             <p>
               <strong>计时：</strong>
-              左栏文字参与估时，制作说明不参与。复杂数字、缩写和表演停顿需要实际试读校准。手动时长会覆盖该段的自动估时。
+              文案文字参与估时，制作说明不参与。复杂数字、缩写和表演停顿需要实际试读校准。手动时长会覆盖该段的自动估时。
             </p>
             <p className="form-help">
               当前版本每份脚本最多 500 段，本机最多 100 份脚本；单栏最多 50,000
-              字符，JSON 导入上限 8 MB。
+              字符，单张配图上限 20 MB，JSON 导入上限 128 MB。
             </p>
           </div>
           <DialogFooter>
@@ -1704,7 +2086,13 @@ export function ScriptEditor({ homeHref }: { homeHref?: string } = {}) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {toast && (
+      {pointerReorder.drag && (
+        <output className="toast drag-hint">
+          <GripVertical size={16} />
+          <span>拖拽中 · 松手放置</span>
+        </output>
+      )}
+      {toast && !pointerReorder.drag && (
         <output className="toast">
           <Check size={16} />
           <span>{toast}</span>

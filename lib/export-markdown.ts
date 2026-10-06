@@ -82,6 +82,13 @@ export function exportMarkdown(
 export function exportBackup(workspace: Workspace): string {
   return JSON.stringify(workspace, null, 2) + '\n';
 }
+export function exportScriptJson(script: Script): string {
+  return exportBackup({
+    schemaVersion: 1,
+    activeId: script.id,
+    documents: [script],
+  });
+}
 export function safeFilename(title: string): string {
   const name =
     Array.from(title, (character) =>

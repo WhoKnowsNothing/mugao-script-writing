@@ -1,4 +1,5 @@
-import { Blob as NodeBlob } from 'node:buffer';
+import { Blob as NodeBlob, Buffer } from 'node:buffer';
+import JSZip from 'jszip';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -53,7 +54,7 @@ const createDataTransfer = () => {
 };
 
 describe('编辑器实际组件流程（非浏览器视觉测试）', () => {
-  it('编辑后保存，卸载重开恢复；一键 Markdown 使用当前文案', async () => {
+  it('编辑后保存并恢复，默认导出 Word，菜单仍能导出当前文案的 Markdown', async () => {
     const first = render(<ScriptEditor />);
     await waitUntilSaved();
     fireEvent.change(screen.getByLabelText('脚本标题'), {
@@ -78,14 +79,33 @@ describe('编辑器实际组件流程（非浏览器视觉测试）', () => {
     expect(
       (screen.getByLabelText('第1段画面') as HTMLTextAreaElement).value,
     ).toBe('新镜头说明');
-    fireEvent.click(screen.getByRole('button', { name: '导出 Markdown' }));
-    const blob = createUrl.mock.calls[0][0] as Blob;
+    fireEvent.click(screen.getByRole('button', { name: '导出 Word' }));
+    await waitFor(() => expect(createUrl).toHaveBeenCalledOnce());
+    const word = createUrl.mock.calls[0][0] as Blob;
+    const zip = await JSZip.loadAsync(Buffer.from(await word.arrayBuffer()));
+    const xml = await zip.file('word/document.xml')!.async('string');
+    expect(xml).toContain('新视频测试');
+    expect(xml).toContain('新文案');
+    expect(xml).toContain('第二行|特殊符号');
+    expect(xml).toContain('新镜头说明');
+    expect((clickDownload.mock.contexts[0] as HTMLAnchorElement).download).toBe(
+      '新视频测试.docx',
+    );
+    fireEvent.click(screen.getByRole('button', { name: '更多导出格式' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: /Markdown 双栏表格/, hidden: true }),
+    );
+    const blob = createUrl.mock.calls[1][0] as Blob;
     const markdown = await blob.text();
     expect(markdown).toContain('# 新视频测试');
     expect(markdown).toContain('新文案<br>第二行&#124;特殊符号');
     expect(markdown).toContain('新镜头说明');
-    expect(clickDownload).toHaveBeenCalledOnce();
-  });
+    expect(clickDownload).toHaveBeenCalledTimes(2);
+    await waitFor(
+      () => expect(screen.queryByRole('menu', { hidden: true })).toBeNull(),
+      { timeout: 15000 },
+    );
+  }, 30000);
 
   it('新建、中文输入法组合、光标分段与撤销可组合使用', async () => {
     render(<ScriptEditor />);
@@ -234,6 +254,98 @@ describe('编辑器实际组件流程（非浏览器视觉测试）', () => {
     await waitUntilSaved();
   }, 30000);
 
+  it('手机拖拽保留制作说明，首段可移到末尾并整步撤销重做', async () => {
+    render(<ScriptEditor />);
+    await waitUntilSaved();
+    const fields = ['文案', '画面', 'BGM', '附注'];
+    const original = fields.map(
+      (field) =>
+        (screen.getByLabelText(`第1段${field}`) as HTMLTextAreaElement).value,
+    );
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function (this: HTMLElement) {
+        const rows = this.matches('.outline-item')
+          ? [...this.parentElement!.children]
+          : [...document.querySelectorAll('.script-segment')];
+        const top = Math.max(0, rows.indexOf(this)) * 100;
+        return {
+          x: 0,
+          y: top,
+          top,
+          bottom: top + 100,
+          left: 0,
+          right: 320,
+          width: 320,
+          height: 100,
+          toJSON: () => ({}),
+        };
+      },
+    );
+    const touch = (target: Element | Window, type: string, y: number) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: 20,
+        clientY: y,
+        button: 0,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 1 },
+        pointerType: { value: 'touch' },
+        isPrimary: { value: true },
+      });
+      fireEvent(target, event);
+    };
+    touch(
+      screen.getByRole('button', { name: '拖动手机第1段排序' }),
+      'pointerdown',
+      20,
+    );
+    await screen.findByText('拖拽中 · 松手放置');
+    touch(window, 'pointermove', 280);
+    expect(
+      document
+        .getElementById('segment-welcome-3')
+        ?.getAttribute('data-drop-position'),
+    ).toBe('after');
+    touch(window, 'pointerup', 280);
+    expect(
+      fields.map(
+        (field) =>
+          (screen.getByLabelText(`第3段${field}`) as HTMLTextAreaElement).value,
+      ),
+    ).toEqual(original);
+    fireEvent.click(screen.getByRole('button', { name: '撤销' }));
+    expect(
+      fields.map(
+        (field) =>
+          (screen.getByLabelText(`第1段${field}`) as HTMLTextAreaElement).value,
+      ),
+    ).toEqual(original);
+    fireEvent.click(screen.getByRole('button', { name: '重做' }));
+    expect(
+      fields.map(
+        (field) =>
+          (screen.getByLabelText(`第3段${field}`) as HTMLTextAreaElement).value,
+      ),
+    ).toEqual(original);
+    touch(
+      screen.getByRole('button', { name: '拖动大纲第3段排序' }),
+      'pointerdown',
+      250,
+    );
+    await screen.findByText('拖拽中 · 松手放置');
+    touch(window, 'pointermove', 10);
+    touch(window, 'pointerup', 10);
+    expect(
+      fields.map(
+        (field) =>
+          (screen.getByLabelText(`第1段${field}`) as HTMLTextAreaElement).value,
+      ),
+    ).toEqual(original);
+    await waitUntilSaved();
+  });
+
   it('存储失败时保留输入、显示警告，仍可导出', async () => {
     render(<ScriptEditor />);
     await waitUntilSaved();
@@ -249,10 +361,17 @@ describe('编辑器实际组件流程（非浏览器视觉测试）', () => {
     expect(
       (screen.getByLabelText('第1段文案') as HTMLTextAreaElement).value,
     ).toBe('保存失败也不能丢的稿子');
-    fireEvent.click(screen.getByRole('button', { name: '导出 Markdown' }));
+    fireEvent.click(screen.getByRole('button', { name: '更多导出格式' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: /Markdown 双栏表格/, hidden: true }),
+    );
     const blob = createUrl.mock.calls[0][0] as Blob;
     expect(await blob.text()).toContain('保存失败也不能丢的稿子');
-  });
+    await waitFor(
+      () => expect(screen.queryByRole('menu', { hidden: true })).toBeNull(),
+      { timeout: 15000 },
+    );
+  }, 30000);
 
   it('错误 JSON 导入不会替换现有脚本', async () => {
     const user = userEvent.setup();

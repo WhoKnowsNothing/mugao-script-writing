@@ -24,14 +24,26 @@ export function AutoTextarea({
   useEffect(() => {
     if (!ref.current || typeof ResizeObserver === 'undefined') return;
     let lastWidth = ref.current.clientWidth;
+    let frame = 0;
+    const scheduleResize = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(resize);
+    };
     const observer = new ResizeObserver(([entry]) => {
       if (Math.abs(entry.contentRect.width - lastWidth) > 1) {
         lastWidth = entry.contentRect.width;
-        resize();
+        // Resize after observer delivery; writing height here can trigger a loop
+        // when a dialog or a mobile breakpoint changes the available width.
+        scheduleResize();
       }
     });
     observer.observe(ref.current);
-    return () => observer.disconnect();
+    window.addEventListener('mugao-font-scale-change', scheduleResize);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('mugao-font-scale-change', scheduleResize);
+      cancelAnimationFrame(frame);
+    };
   }, []);
   return <Textarea {...props} value={value} ref={ref} />;
 }

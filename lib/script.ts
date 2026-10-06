@@ -1,8 +1,10 @@
+import { validateSegmentImage } from './segment-image.ts';
+
 export const LIMITS = {
   documents: 100,
   segments: 500,
   text: 50000,
-  fileBytes: 8 * 1024 * 1024,
+  fileBytes: 128 * 1024 * 1024,
 };
 
 export interface Segment {
@@ -12,6 +14,7 @@ export interface Segment {
   visual: string;
   bgm: string;
   notes: string;
+  image?: string;
   pauseSeconds: number;
   durationSeconds: number | null;
 }
@@ -230,17 +233,22 @@ export function moveSegment(
   return { ...doc, segments: rows };
 }
 
+// A null target places the segment at the end of the script.
 export function moveSegmentBefore(
   doc: Script,
   id: string,
-  targetId: string,
+  targetId: string | null,
 ): Script {
   const from = doc.segments.findIndex((row) => row.id === id);
   const target = doc.segments.findIndex((row) => row.id === targetId);
-  if (from < 0 || target < 0 || id === targetId) return doc;
+  if (from < 0 || (targetId !== null && target < 0) || id === targetId)
+    return doc;
   const rows = [...doc.segments];
   const [moving] = rows.splice(from, 1);
-  const insertion = rows.findIndex((row) => row.id === targetId);
+  const insertion =
+    targetId === null
+      ? rows.length
+      : rows.findIndex((row) => row.id === targetId);
   rows.splice(insertion, 0, moving);
   if (rows.every((row, index) => row === doc.segments[index])) return doc;
   return { ...doc, segments: rows };
@@ -300,12 +308,17 @@ export function mergeWithNext(doc: Script, id: string): Script {
   const a = doc.segments[index],
     b = doc.segments[index + 1];
   if (index < 0 || !a || !b) return doc;
+  if (a.image && b.image && a.image !== b.image)
+    throw new Error(
+      '两段都有配图，每段只能保留一张。请先移除其中一张，再合并。',
+    );
   const merged: Segment = {
     ...a,
     narration: joinText(a.narration, b.narration),
     visual: joinText(a.visual, b.visual),
     bgm: joinText(a.bgm, b.bgm),
     notes: joinText(a.notes, b.notes),
+    ...(a.image || b.image ? { image: a.image || b.image } : {}),
     pauseSeconds: a.pauseSeconds + b.pauseSeconds,
     durationSeconds:
       a.durationSeconds !== null || b.durationSeconds !== null
@@ -388,6 +401,7 @@ export function validateWorkspace(value: unknown): Workspace {
     const segments = d.segments.map((rawRow): Segment => {
       const r = object(rawRow, '段落');
       const rowId = identifier(r.id);
+      const image = validateSegmentImage(r.image);
       if (rowIds.has(rowId)) throw new Error('备份中存在重复的段落标识。');
       rowIds.add(rowId);
       return {
@@ -397,6 +411,7 @@ export function validateWorkspace(value: unknown): Workspace {
         visual: string(r.visual, '画面'),
         bgm: string(r.bgm, 'BGM'),
         notes: string(r.notes, '附注'),
+        ...(image ? { image } : {}),
         pauseSeconds: number(r.pauseSeconds, '停顿', 0, 3600),
         durationSeconds:
           r.durationSeconds === null
@@ -423,7 +438,7 @@ export function validateWorkspace(value: unknown): Workspace {
 
 export function parseBackup(text: string): Workspace {
   if (new TextEncoder().encode(text).byteLength > LIMITS.fileBytes)
-    throw new Error('备份文件不能超过 8 MB。');
+    throw new Error('备份文件不能超过 128 MB。');
   let data: unknown;
   try {
     data = JSON.parse(text);
